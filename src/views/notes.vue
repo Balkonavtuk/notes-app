@@ -28,7 +28,12 @@
     <main class="main-content">
       <!-- Панель управления видом -->
       <div class="view-controls">
-        <button class="view-btn active" aria-label="Вид плиткой">
+        <button 
+          class="view-btn" 
+          :class="{ active: currentView === 'grid' }"
+          @click="currentView = 'grid'"
+          aria-label="Вид плиткой"
+        >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="7" height="7"></rect>
             <rect x="14" y="3" width="7" height="7"></rect>
@@ -36,7 +41,13 @@
             <rect x="3" y="14" width="7" height="7"></rect>
           </svg>
         </button>
-        <button class="view-btn" aria-label="Вид списком">
+        
+        <button 
+          class="view-btn" 
+          :class="{ active: currentView === 'list' }"
+          @click="currentView = 'list'"
+          aria-label="Вид списком"
+        >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="8" y1="6" x2="21" y2="6"></line>
             <line x1="8" y1="12" x2="21" y2="12"></line>
@@ -80,7 +91,12 @@
 <script>
 export default {
   name: 'Notes',
-  // Функционал пока не реализуем по ТЗ
+  data() {
+    return {
+      // Состояние для управления модификаторами кнопок
+      currentView: 'grid' 
+    }
+  }
 }
 </script>
 
