@@ -10,7 +10,12 @@
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
-          <input type="text" placeholder="Поиск" disabled />
+          <!-- Привязываем инпут к searchQuery -->
+          <input 
+            type="text" 
+            placeholder="Поиск" 
+            v-model="searchQuery"
+          />
         </div>
       </div>
 
@@ -59,9 +64,19 @@
         </button>
       </div>
 
-      <div class="empty-state">
+<!-- Состояние пустого списка -->
+      <div v-if="notes.length === 0 && !isLoading" class="empty-state">
         <p>История поиска отсутствует</p>
       </div>
+
+      <!-- Список заметок (в будущем здесь будет вывод карточек) -->
+      <div class="notes-list" v-else>
+        <!-- Вывод списка -->
+      </div>
+
+      <!-- Триггер и компонент прелоадера для IntersectionObserver -->
+      <Loader v-if="isLoading" />
+      <div ref="observerTrigger" class="observer-trigger"></div>
 
       <!-- Кнопка добавления -->
       <button class="btn-fab">
@@ -75,7 +90,7 @@
     <!-- Футер -->
     <footer class="footer">
       <div class="footer-stats">
-        Всего заметок: 20
+        Всего заметок: {{ notes.length }}
       </div>
       <div class="footer-user">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -89,19 +104,112 @@
 </template>
 
 <script>
+import { ref, watch, onMounted, onUnmounted } from 'vue';
+import { useRequest } from '@/composables/request';
+import Loader from '@/components/Loader.vue';
+
 export default {
   name: 'Notes',
-  data() {
+  components: {
+    Loader
+  },
+  setup() {
+    const currentView = ref('grid');
+    const notes = ref([]);
+    
+    // Реф-ссылки для пагинации и поиска по ТЗ
+    const page = ref(1);
+    const searchQuery = ref('');
+    const observerTrigger = ref(null);
+    let observer = null;
+
+    // Инициализируем хук запроса
+    const { request, data, isLoading, isLoaded } = useRequest('/notes', {
+      method: 'GET',
+      query: {
+        page: page.value,
+        search: searchQuery.value,
+        limit: 20
+      }
+    });
+
+    // Функция загрузки данных
+    const fetchNotes = async () => {
+      // Обновляем query параметры перед запросом
+      const queryParams = {
+        page: page.value,
+        search: searchQuery.value,
+        limit: 20
+      };
+
+      // Пересоздаем запрос с актуальными параметрами (или передаем в request)
+      const currentRequest = useRequest('/notes', {
+        method: 'GET',
+        query: queryParams
+      });
+
+      await currentRequest.request();
+
+      if (currentRequest.isLoaded.value && currentRequest.data.value) {
+        const newItems = Array.isArray(currentRequest.data.value) 
+          ? currentRequest.data.value 
+          : (currentRequest.data.value.data || []);
+        
+        // Добавляем новые элементы к существующим (пагинация)
+        notes.value = [...notes.value, ...newItems];
+      }
+    };
+
+    // Следим за изменением строки поиска: сбрасываем страницу и очищаем список
+    watch(searchQuery, async () => {
+      page.value = 1;
+      notes.value = [];
+      await fetchNotes();
+    });
+
+    // Настройка IntersectionObserver для бесконечного скролла
+    onMounted(async () => {
+      await fetchNotes(); // Первая загрузка
+
+      observer = new IntersectionObserver(async ([entry]) => {
+        if (entry.isIntersecting && !isLoading.value) {
+          page.value += 1;
+          await fetchNotes();
+        }
+      }, {
+        root: null,
+        rootMargin: '100px',
+        threshold: 0.1
+      });
+
+      if (observerTrigger.value) {
+        observer.observe(observerTrigger.value);
+      }
+    });
+
+    onUnmounted(() => {
+      if (observer) {
+        observer.disconnect();
+      }
+    });
+
     return {
-      // Состояние для управления модификаторами кнопок
-      currentView: 'grid' 
-    }
+      currentView,
+      notes,
+      searchQuery,
+      isLoading,
+      observerTrigger
+    };
   }
 }
 </script>
 
 <style scoped>
 /* Базовые стили и переменные */
+.observer-trigger {
+  height: 10px;
+  width: 100%;
+}
 .notes-app {
   --primary: #7c3aed; /* Фиолетовый цвет кнопок */
   --primary-hover: #6d28d9;
