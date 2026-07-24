@@ -79,12 +79,21 @@
       <div ref="observerTrigger" class="observer-trigger"></div>
 
       <!-- Кнопка добавления -->
-      <button class="btn-fab">
+      <button class="btn-fab" @click="isModalOpen = true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="12" y1="5" x2="12" y2="19"></line>
           <line x1="5" y1="12" x2="19" y2="12"></line>
         </svg>
       </button>
+      <!-- Подключаем c-modal -->
+      <CModal v-model="isModalOpen" :showCloseButton="true">
+        <CNoteEditForm 
+          :note="currentEditingNote" 
+          :isLoading="isSaving"
+          @submit="handleSaveNote" 
+          @cancel="closeModal" 
+        />
+      </CModal>
     </main>
 
     <!-- Футер -->
@@ -106,44 +115,58 @@
 <script>
 import { ref, watch, onMounted, onUnmounted } from 'vue';
 import { useRequest } from '@/composables/request';
+import { useDebounceFn } from '@/composables/useDebounceFn';
 import Loader from '@/components/Loader.vue';
+import CModal from '@/components/c-modal/c-modal.vue';
+import CNoteEditForm from '@/components/c-note-edit-form/c-note-edit-form.vue';
 
 export default {
   name: 'Notes',
   components: {
-    Loader
+    Loader, CModal, CNoteEditForm
   },
   setup() {
     const currentView = ref('grid');
     const notes = ref([]);
     
-    // Реф-ссылки для пагинации и поиска по ТЗ
+    const currentEditingNote = ref(null); // Сюда положим заметку, если будем её редактировать
+
+    const isModalOpen = ref(false);
+    const noteTitle = ref('');
+    const noteText = ref('');
+    const isSaving = ref(false);
+
+    const openCreateModal = () => {
+      currentEditingNote.value = null; // Сбрасываем данные
+      isModalOpen.value = true;        // Открываем окно
+    };
+
+    const openEditModal = (note) => {
+      currentEditingNote.value = note; // Передаем объект заметки в форму
+      isModalOpen.value = true;        // Открываем окно
+    };
+    const closeModal = () => {
+      isModalOpen.value = false;
+      currentEditingNote.value = null;
+    };
+    const saveNote = () => {
+      // Логика сохранения заметки
+      isModalOpen.value = false;
+    };
+
     const page = ref(1);
     const searchQuery = ref('');
     const observerTrigger = ref(null);
     let observer = null;
 
-    // Инициализируем хук запроса
-    const { request, data, isLoading, isLoaded } = useRequest('/notes', {
-      method: 'GET',
-      query: {
-        page: page.value,
-        search: searchQuery.value,
-        limit: 20
-      }
-    });
-
-    // Функция загрузки данных
     const fetchNotes = async () => {
-      // Обновляем query параметры перед запросом
       const queryParams = {
         page: page.value,
         search: searchQuery.value,
         limit: 20
       };
 
-      // Пересоздаем запрос с актуальными параметрами (или передаем в request)
-      const currentRequest = useRequest('/notes', {
+      const currentRequest = useRequest('http://127.0.0.1:5000/notes', {
         method: 'GET',
         query: queryParams
       });
@@ -151,28 +174,77 @@ export default {
       await currentRequest.request();
 
       if (currentRequest.isLoaded.value && currentRequest.data.value) {
-        const newItems = Array.isArray(currentRequest.data.value) 
-          ? currentRequest.data.value 
-          : (currentRequest.data.value.data || []);
+        // Берем массив напрямую из ключа notes (или пустой массив, если что-то пошло не так)
+        const newItems = currentRequest.data.value.notes || [];
         
-        // Добавляем новые элементы к существующим (пагинация)
         notes.value = [...notes.value, ...newItems];
       }
     };
+      const handleSaveNote = async (formData) => {
+        isSaving.value = true;
 
-    // Следим за изменением строки поиска: сбрасываем страницу и очищаем список
-    watch(searchQuery, async () => {
+        try {
+          const submitData = new FormData();
+          
+          // 1. Обязательный title
+          submitData.append('title', formData.title);
+          
+          // 2. Строго 'test', как того требует спецификация API бэкенда
+          submitData.append('text', formData.text); 
+          
+          // 3. Обязательный image (отправляем файл, либо пустую строку/null, чтобы ключ присутствовал)
+          if (formData.file) {
+            submitData.append('image', formData.file);
+          } else {
+            // Отправляем пустой файл-заглушку, чтобы бэкенд не падал при поиске stream
+            submitData.append('image', new File([""], "empty.png", { type: "image/png" }));
+          }
+
+          const isEdit = !!formData.id;
+          const url = isEdit 
+            ? `http://127.0.0.1:5000/notes/${formData.id}` 
+            : 'http://127.0.0.1:5000/notes';
+          const method = isEdit ? 'PATCH' : 'POST';
+
+          const saveRequest = useRequest(url, {
+            method: method,
+            body: submitData
+          });
+
+          await saveRequest.request();
+
+          if (saveRequest.isLoaded.value) {
+            closeModal();
+            page.value = 1;
+            notes.value = [];
+            await fetchNotes();
+          } else {
+            // Выводим точную ошибку бэкенда в консоль
+            console.error('Ошибка при сохранении:', saveRequest.error.value);
+          }
+        } finally {
+          isSaving.value = false;
+        }
+      };
+    // Создаем дебаунс-версию функции поиска с задержкой 250мс
+    const debouncedSearch = useDebounceFn(async () => {
       page.value = 1;
       notes.value = [];
       await fetchNotes();
+    }, 250);
+
+    // Следим за изменением строки поиска и вызываем дебаунс
+    watch(searchQuery, () => {
+      debouncedSearch();
     });
 
-    // Настройка IntersectionObserver для бесконечного скролла
     onMounted(async () => {
-      await fetchNotes(); // Первая загрузка
+      await fetchNotes();
 
       observer = new IntersectionObserver(async ([entry]) => {
-        if (entry.isIntersecting && !isLoading.value) {
+        // isLoading здесь можно вытащить из хука запроса при необходимости, 
+        // либо полагаться на стандартное поведение скролла
+        if (entry.isIntersecting) {
           page.value += 1;
           await fetchNotes();
         }
@@ -197,8 +269,16 @@ export default {
       currentView,
       notes,
       searchQuery,
-      isLoading,
-      observerTrigger
+      observerTrigger,
+      isModalOpen,
+      noteTitle,
+      noteText,
+      saveNote,
+      currentEditingNote,
+      openCreateModal,
+      openEditModal,
+      closeModal,
+      handleSaveNote,
     };
   }
 }
