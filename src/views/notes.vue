@@ -69,9 +69,20 @@
         <p>История поиска отсутствует</p>
       </div>
 
-      <!-- Список заметок (в будущем здесь будет вывод карточек) -->
-      <div class="notes-list" v-else>
-        <!-- Вывод списка -->
+<!-- Список заметок -->
+      <div 
+        class="notes-list" 
+        :class="`layout-${currentView}`" 
+        v-else
+      >
+        <NoteCard 
+          v-for="note in notes" 
+          :key="note.id" 
+          :note="note"
+          :viewType="currentView"
+          @edit="openEditModal"
+          @delete="handleDeleteNote"
+        />
       </div>
 
       <!-- Триггер и компонент прелоадера для IntersectionObserver -->
@@ -119,11 +130,12 @@ import { useDebounceFn } from '@/composables/useDebounceFn';
 import Loader from '@/components/Loader.vue';
 import CModal from '@/components/c-modal/c-modal.vue';
 import CNoteEditForm from '@/components/c-note-edit-form/c-note-edit-form.vue';
+import NoteCard from '@/views/notes/note.vue';
 
 export default {
   name: 'Notes',
   components: {
-    Loader, CModal, CNoteEditForm
+    Loader, CModal, CNoteEditForm, NoteCard
   },
   setup() {
     const currentView = ref('grid');
@@ -226,6 +238,27 @@ export default {
           isSaving.value = false;
         }
       };
+      const handleDeleteNote = async (id) => {
+        const isConfirmed = confirm('Вы действительно хотите удалить эту заметку?');
+        if (!isConfirmed) return;
+
+        try {
+          const deleteRequest = useRequest(`http://127.0.0.1:5000/notes/${id}`, {
+            method: 'DELETE'
+          });
+
+          await deleteRequest.request();
+
+          if (deleteRequest.isLoaded.value) {
+            // Удаляем заметку из локального массива без перезагрузки всей страницы
+            notes.value = notes.value.filter(note => note.id !== id);
+          } else {
+            console.error('Ошибка при удалении:', deleteRequest.error.value);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      };
     // Создаем дебаунс-версию функции поиска с задержкой 250мс
     const debouncedSearch = useDebounceFn(async () => {
       page.value = 1;
@@ -279,6 +312,7 @@ export default {
       openEditModal,
       closeModal,
       handleSaveNote,
+      handleDeleteNote,
     };
   }
 }
@@ -369,7 +403,25 @@ export default {
 .search-box input::placeholder {
   color: var(--text-muted);
 }
+/* Базовый контейнер для списка */
+.notes-list {
+  width: 100%;
+  margin-top: 24px;
+}
 
+/* Сетка для режима ПЛИТКИ (Grid) */
+.notes-list.layout-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr); /* 3 колонки на десктопе */
+  gap: 24px;
+}
+
+/* Сетка для режима СПИСКА (List) */
+.notes-list.layout-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px; /* Карточки идут одна под другой */
+}
 /* Кнопка Архив */
 .btn-archive {
   display: flex;
@@ -550,6 +602,10 @@ export default {
     display: block; /* Показываем иконку на мобильных */
   }
   
+  .notes-list.layout-grid {
+    grid-template-columns: 1fr; /* 1 колонка на смартфонах */
+  }
+
   .view-controls {
     padding: 16px;
   }
