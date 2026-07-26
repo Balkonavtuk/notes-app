@@ -81,7 +81,7 @@
           :note="note"
           :viewType="currentView"
           @edit="openEditModal"
-          @delete="handleDeleteNote"
+          @delete="openDeleteModal"
         />
       </div>
 
@@ -104,6 +104,44 @@
           @submit="handleSaveNote" 
           @cancel="closeModal" 
         />
+      </CModal>
+      <!-- Модальное окно подтверждения удаления -->
+      <CModal v-model="isDeleteModalOpen" :showCloseButton="false">
+        <div class="delete-modal">
+          <!-- Иконка корзины -->
+          <div class="delete-icon-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2-2v2"></path>
+              <line x1="10" y1="11" x2="10" y2="17"></line>
+              <line x1="14" y1="11" x2="14" y2="17"></line>
+            </svg>
+          </div>
+
+          <!-- Текст макета -->
+          <h3 class="delete-title">Удалить заметку</h3>
+          <p class="delete-description">
+            Удаленная заметка попадет в архив без возможности восстановления
+          </p>
+
+          <!-- Кнопки действий -->
+          <div class="delete-actions">
+            <button 
+              class="btn-modal btn-cancel" 
+              @click="closeDeleteModal" 
+              :disabled="isDeleting"
+            >
+              Отменить
+            </button>
+            <button 
+              class="btn-modal btn-confirm" 
+              @click="handleDeleteNote" 
+              :disabled="isDeleting"
+            >
+              {{ isDeleting ? 'Удаление...' : 'Удалить' }}
+            </button>
+          </div>
+        </div>
       </CModal>
     </main>
 
@@ -170,6 +208,19 @@ export default {
     const searchQuery = ref('');
     const observerTrigger = ref(null);
     let observer = null;
+    const isDeleteModalOpen = ref(false);
+    const noteToDeleteId = ref(null);
+    const isDeleting = ref(false);
+
+    const openDeleteModal = (id) => {
+      noteToDeleteId.value = id;
+      isDeleteModalOpen.value = true;
+    };
+
+    const closeDeleteModal = () => {
+      isDeleteModalOpen.value = false;
+      noteToDeleteId.value = null;
+    };
 
     const fetchNotes = async () => {
       const queryParams = {
@@ -197,22 +248,29 @@ export default {
 
         try {
           const submitData = new FormData();
+          const isEdit = !!formData.id; // Определяем, редактирование это или создание
           
-          // 1. Обязательный title
-          submitData.append('title', formData.title);
+          // 1. Поле title
+          if (formData.title !== undefined) {
+            submitData.append('title', formData.title);
+          }
           
-          // 2. Строго 'test', как того требует спецификация API бэкенда
-          submitData.append('text', formData.text); 
+          // 2. Поле текста (строго 'test', согласно спецификации)
+          if (formData.text !== undefined) {
+            submitData.append('text', formData.text); 
+          }
           
-          // 3. Обязательный image (отправляем файл, либо пустую строку/null, чтобы ключ присутствовал)
+          // 3. Поле image
           if (formData.file) {
+            // Если пользователь выбрал новый файл — отправляем его
             submitData.append('image', formData.file);
-          } else {
-            // Отправляем пустой файл-заглушку, чтобы бэкенд не падал при поиске stream
+          } else if (!isEdit) {
+            // Если это создание новой заметки (POST) и файла нет — шлем заглушку
+            // При редактировании (PATCH) мы просто пропускаем этот ключ, 
+            // чтобы не затереть старую картинку
             submitData.append('image', new File([""], "empty.png", { type: "image/png" }));
           }
 
-          const isEdit = !!formData.id;
           const url = isEdit 
             ? `http://127.0.0.1:5000/notes/${formData.id}` 
             : 'http://127.0.0.1:5000/notes';
@@ -225,38 +283,42 @@ export default {
 
           await saveRequest.request();
 
-          if (saveRequest.isLoaded.value) {
+          // Проверяем успешность (используем надежную проверку из предыдущего шага)
+          if (saveRequest.isLoaded.value || !saveRequest.error.value) {
             closeModal();
             page.value = 1;
             notes.value = [];
             await fetchNotes();
           } else {
-            // Выводим точную ошибку бэкенда в консоль
             console.error('Ошибка при сохранении:', saveRequest.error.value);
           }
         } finally {
           isSaving.value = false;
         }
       };
-      const handleDeleteNote = async (id) => {
-        const isConfirmed = confirm('Вы действительно хотите удалить эту заметку?');
-        if (!isConfirmed) return;
+      const handleDeleteNote = async () => {
+        if (!noteToDeleteId.value) return;
+
+        isDeleting.value = true;
 
         try {
-          const deleteRequest = useRequest(`http://127.0.0.1:5000/notes/${id}`, {
+          const deleteRequest = useRequest(`http://127.0.0.1:5000/notes/${noteToDeleteId.value}`, {
             method: 'DELETE'
           });
 
           await deleteRequest.request();
 
           if (deleteRequest.isLoaded.value) {
-            // Удаляем заметку из локального массива без перезагрузки всей страницы
-            notes.value = notes.value.filter(note => note.id !== id);
+            // Обновляем список заметок локально без перезагрузки страницы
+            notes.value = notes.value.filter(note => note.id !== noteToDeleteId.value);
+            closeDeleteModal();
           } else {
             console.error('Ошибка при удалении:', deleteRequest.error.value);
           }
         } catch (e) {
           console.error(e);
+        } finally {
+          isDeleting.value = false;
         }
       };
     // Создаем дебаунс-версию функции поиска с задержкой 250мс
@@ -313,6 +375,10 @@ export default {
       closeModal,
       handleSaveNote,
       handleDeleteNote,
+      isDeleteModalOpen,
+      isDeleting,
+      openDeleteModal,
+      closeDeleteModal,
     };
   }
 }
@@ -544,6 +610,94 @@ export default {
   transform: translateY(0) scale(0.92);
 }
 
+.delete-modal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 12px 16px;
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+/* Фиолетовая иконка корзины */
+.delete-icon-box {
+  width: 48px;
+  height: 48px;
+  color: #6c5ce7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.delete-icon-box svg {
+  width: 32px;
+  height: 32px;
+}
+
+/* Заголовок */
+.delete-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1e1e24;
+  margin: 0 0 12px 0;
+}
+
+/* Описание */
+.delete-description {
+  font-size: 14px;
+  line-height: 1.4;
+  color: #555566;
+  margin: 0 0 28px 0;
+}
+
+/* Блок с кнопками */
+.delete-actions {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+}
+
+.btn-modal {
+  flex: 1;
+  padding: 12px 20px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+/* Кнопка "Отменить" */
+.btn-cancel {
+  background: transparent;
+  border: 1px solid #6c5ce7;
+  color: #6c5ce7;
+}
+
+.btn-cancel:hover {
+  background: rgba(108, 92, 231, 0.05);
+}
+
+/* Кнопка "Удалить" */
+.btn-confirm {
+  background: #6c5ce7;
+  border: 1px solid #6c5ce7;
+  color: #ffffff;
+}
+
+.btn-confirm:hover {
+  background: #5b4bc4;
+  border-color: #5b4bc4;
+}
+
+.btn-modal:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* ================= ФУТЕР ================= */
 .footer {
   display: flex;
@@ -601,7 +755,7 @@ export default {
   .btn-archive .archive-icon {
     display: block; /* Показываем иконку на мобильных */
   }
-  
+
   .notes-list.layout-grid {
     grid-template-columns: 1fr; /* 1 колонка на смартфонах */
   }
