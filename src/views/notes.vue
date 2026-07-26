@@ -723,6 +723,10 @@ export default {
     gap: 16px;
   }
 
+.view-controls {
+  display: none;
+}
+
   /* Переносим поиск наверх */
 .search-container {
     order: -1;
